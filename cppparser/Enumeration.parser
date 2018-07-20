@@ -1,0 +1,81 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Enumeration.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/TypeExpr.hpp>
+[cpp]#include <gendoc/cppparser/Expression.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Enumeration
+    {
+        using Identifier.QualifiedIdNode;
+        using Identifier.Identifier;
+        using TypeExpr.TypeExpr;
+        using Expression.ConstantExpression;
+
+        EnumDeclaration(ParsingContext* ctx) : EnumTypeNode*
+            ::= (EnumSpecifier(ctx) ';'){ value = EnumSpecifier; }
+            ;
+
+        OpaqueEnumDeclaration(var std::unique_ptr<Node> enumName, var std::unique_ptr<Node> enumBase, ParsingContext* ctx) : Node*
+            ::= (EnumKey EnumName(ctx){ enumName.reset(EnumName); } (EnumBase(ctx){ enumBase.reset(EnumBase); })? ';')
+            { 
+                value = new EnumTypeNode(span, EnumKey, enumName.release(), enumBase.release()); 
+            }
+            ;
+
+        EnumSpecifier(var std::unique_ptr<EnumTypeNode> enumTypeNode, var Span openBraceSpan, var Span closeBraceSpan, ParsingContext* ctx) : EnumTypeNode*
+            ::= (EnumHead(ctx){ enumTypeNode.reset(EnumHead); } '{'{ openBraceSpan = span; } Enumerators(enumTypeNode.get(), ctx) '}'!{ closeBraceSpan = span; })
+            {
+                value = enumTypeNode.release();
+                value->SetOpenBraceSpan(openBraceSpan);
+                value->SetCloseBraceSpan(closeBraceSpan);
+            }
+            ;
+
+        EnumHead(var std::unique_ptr<Node> enumName, ParsingContext* ctx) : EnumTypeNode*
+            ::= (EnumKey EnumName(ctx){ enumName.reset(EnumName); } EnumBase(ctx)?){ value = new EnumTypeNode(span, EnumKey, enumName.release(), EnumBase); }
+            ;
+
+        EnumKey : EnumKey
+            ::= (keyword("enum") keyword("class")){ value = EnumKey::enumClass_; }
+            |   (keyword("enum") keyword("struct")){ value = EnumKey::enumStruct_; }
+            |   keyword("enum"){ value = EnumKey::enum_; }
+            ;
+
+        EnumName(ParsingContext* ctx) : Node*
+            ::= QualifiedIdNode(ctx){ value = QualifiedIdNode; }
+            ;
+
+        EnumBase(ParsingContext* ctx) : Node*
+            ::= (':' TypeExpr(ctx)){ value = TypeExpr; }
+            ;
+
+        Enumerators(var Span s, EnumTypeNode* enumTypeNode, ParsingContext* ctx)
+            ::= empty{ s = span; }
+                (
+                    EnumeratorDefinition(ctx):left{ s.SetEnd(span.End()); enumTypeNode->AddEnumerator(s, left); }
+                    (',' EnumeratorDefinition(ctx):right{ s.SetEnd(span.End()); enumTypeNode->AddEnumerator(s, right); })*
+                )?
+            ;
+
+        EnumeratorDefinition(ParsingContext* ctx, var Span assignmentSignSpan, var std::u32string valueStr) : EnumeratorNode*
+            ::= (Enumerator ('='{ assignmentSignSpan = span; } ConstantExpression(ctx){ valueStr = std::u32string(matchBegin, matchEnd); })?)
+                { 
+                    value = new EnumeratorNode(span, Enumerator, ConstantExpression, valueStr); 
+                    value->SetAssignmentSignSpan(assignmentSignSpan);
+                }
+            ;
+
+        Enumerator : std::u32string
+            ::= Identifier{ value = Identifier; }
+            ;
+    }
+}

@@ -1,0 +1,27 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+#ifndef GENDOC_CPPSYM_TYPEDEF_SYMBOL_INCLUDED
+#define GENDOC_CPPSYM_TYPEDEF_SYMBOL_INCLUDED
+#include <gendoc/cppsym/TypeSymbol.hpp>
+
+namespace gendoc { namespace cppsym {
+
+class TypedefSymbol : public TypeSymbol
+{
+public:
+    TypedefSymbol(const Span& span_, const std::u32string& name_);
+    std::u32string KindStr() override { return U"typedef"; }
+    std::unique_ptr<dom::Element> CreateElement() override;
+    bool IsTypedefSymbol() const override { return true; }
+    TypeSymbol* GetType() override { return type; }
+    void SetType(TypeSymbol* type_) { type = type_; }
+private:
+    TypeSymbol* type;
+};
+
+} } // namespace gendoc::cppsym
+
+#endif // GENDOC_CPPSYM_TYPEDEF_SYMBOL_INCLUDED

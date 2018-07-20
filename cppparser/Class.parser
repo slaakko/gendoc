@@ -1,0 +1,208 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Class.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Declaration.hpp>
+[cpp]#include <gendoc/cppparser/Template.hpp>
+[cpp]#include <gendoc/cppparser/TypeExpr.hpp>
+[cpp]#include <gendoc/cppparser/Declarator.hpp>
+[cpp]#include <gendoc/cppparser/Function.hpp>
+[cpp]#include <gendoc/cppparser/Enumeration.hpp>
+[cpp]#include <gendoc/cppparser/Expression.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/Literal.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Class
+    {
+        using Declaration.DeclSpecifiers;
+        using TypeExpr.TypeExpr;
+        using Declarator.Declarator;
+        using Declarator.BraceOrEqualInitializer;
+        using Function.FunctionDefinition;
+        using Function.FunctionBody;
+        using Declaration.UsingDeclaration;
+        using Declaration.TypedefDeclaration;
+        using Template.TemplateDeclaration;
+        using Template.SimpleTemplateId;
+        using Enumeration.EnumDeclaration;
+        using Declaration.AliasDeclaration;
+        using Identifier.QualifiedIdNode;
+        using Identifier.Identifier;
+        using Expression.PossiblyEmptyArgumentList;
+        using Declarator.BracedInitializerList;
+        using Literal.IntegerLiteral;
+
+        ClassDeclaration(ParsingContext* ctx) : ClassNode*
+            ::= (ClassSpecifier(ctx) ';'){ value = ClassSpecifier; }
+            ;
+
+        ForwardClassDeclaration(var std::unique_ptr<Node> cn, ParsingContext* ctx) : Node*
+            ::= (ClassKey ClassName(ctx){ cn.reset(ClassName); } ';'){ value = new ForwardClassDeclarationNode(span, ClassKey, cn.release()); }
+            ;
+
+        ClassSpecifier(var std::unique_ptr<ClassNode> classNode, ParsingContext* ctx) : ClassNode*
+            ::= (ClassHead(ctx){ classNode.reset(ClassHead); } 
+                '{'{ classNode->SetOpenBraceSpan(span); } 
+                MemberSpecifications(ctx, classNode.get()) 
+                ('}'{ classNode->SetCloseBraceSpan(span); })!){ value = classNode.release(); }
+            ;
+
+        MemberSpecifications(ParsingContext* ctx, ClassNode* classNode)
+            ::= MemberSpecification(ctx, classNode)*
+            ;
+
+        MemberSpecification(var Span s, ParsingContext* ctx, ClassNode* classNode)
+            ::= empty{ s = span; }
+            (   AccessSpecifier ':'
+                (MemberDeclaration(ctx):m1{ s.SetEnd(span.End()); classNode->AddDeclaration(s, new MemberAccessDeclarationNode(s, AccessSpecifier, m1, true)); })*
+            |   (MemberDeclaration(ctx):m2{ s.SetEnd(span.End()); classNode->AddDeclaration(s, new MemberAccessDeclarationNode(s, classNode->DefaultAccess(), m2, false)); })+
+            )
+            ;
+
+        MemberDeclaration(var std::unique_ptr<Node> typeExpr, var std::unique_ptr<Node> declarator, var std::unique_ptr<Node> initializer, ParsingContext* ctx) : Node*
+            ::= (DeclSpecifiers 
+                TypeExpr(ctx){ typeExpr.reset(TypeExpr); } 
+                Declarator(ctx){ declarator.reset(Declarator); } 
+                VirtPureSpecifiers(IsFunctionDeclarator(declarator.get())) 
+                (BraceOrEqualInitializer(ctx){ initializer.reset(BraceOrEqualInitializer); })? ';')
+                { 
+                    value = new MemberDeclarationNode(span, DeclSpecifiers | VirtPureSpecifiers, typeExpr.release(), declarator.release(), initializer.release()); 
+                }
+            |   SpecialMemberFunctionDeclaration(ctx){ value = SpecialMemberFunctionDeclaration; }
+            |   (FunctionDefinition(ctx) ';'?){ value = FunctionDefinition; }
+            |   (SpecialMemberFunctionDefinition(ctx) ';'?){ value = SpecialMemberFunctionDefinition; }
+            |   UsingDeclaration(ctx){ value = UsingDeclaration; }
+            |   TypedefDeclaration(ctx){ value = TypedefDeclaration; }
+            |   TemplateDeclaration(ctx){ value = TemplateDeclaration; }
+            |   ClassDeclaration(ctx){ value = ClassDeclaration; }
+            |   EnumDeclaration(ctx){ value = EnumDeclaration; }
+            |   AliasDeclaration(ctx){ value = AliasDeclaration; }
+            |   ForwardClassDeclaration(ctx){ value = ForwardClassDeclaration; }
+            ;
+
+        SpecialMemberFunctionDeclaration(var std::unique_ptr<Node> declarator, ParsingContext* ctx) : Node*
+            ::= (DeclSpecifiers Declarator(ctx){ declarator.reset(Declarator); pass = IsFunctionDeclarator(declarator.get()); } VirtPureSpecifiers(true) ';')
+            { 
+                value = new MemberDeclarationNode(span, DeclSpecifiers | VirtPureSpecifiers, nullptr, declarator.release(), nullptr); 
+            }
+            ;
+
+        ClassHead(var std::unique_ptr<Node> cn, ParsingContext* ctx) : ClassNode*
+            ::= (ClassKey ClassName(ctx){ cn.reset(ClassName); } ClassVirtSpecifiers BaseClause(ctx)?)
+            { 
+                value = new ClassNode(span, ClassKey, cn.release(), ClassVirtSpecifiers, BaseClause); 
+            }
+            ;
+
+        ClassKey : ClassKey
+            ::= keyword("class"){ value = ClassKey::class_; }
+            |   keyword("struct"){ value = ClassKey::struct_; }
+            |   keyword("union"){ value = ClassKey::union_; }
+            ;
+
+        ClassName(ParsingContext* ctx) : Node*
+            ::= QualifiedIdNode(ctx){ value = QualifiedIdNode; }
+            ;
+
+        ClassVirtSpecifiers : Specifier
+            ::= (ClassVirtSpecifier{ value = value | ClassVirtSpecifier; })*
+            ;
+
+        ClassVirtSpecifier : Specifier
+            ::= keyword("final"){ value = Specifier::final_; }
+            |   keyword("explicit"){ value = Specifier::explicit_; }
+            ;
+
+        BaseClause(ParsingContext* ctx) : Node*
+            ::= (':' BaseClassSpecifierList(ctx)){ value = BaseClassSpecifierList; }
+            ;
+
+        BaseClassSpecifierList(var std::unique_ptr<Node> node, var Span s, ParsingContext* ctx) : Node*
+            ::= (BaseClassSpecifier(ctx):b1{ node.reset(b1); s = span; } 
+                (',' BaseClassSpecifier(ctx):b2{ s.SetEnd(span.End()); node.reset(new BaseClassSpecifierSequenceNode(s, node.release(), b2)); })*)
+            {
+                value = node.release();
+            }
+            ;
+
+        BaseClassSpecifier(ParsingContext* ctx) : BaseClassSpecifierNode*
+            ::= (BaseSpecifiers ClassName(ctx)){ value = new BaseClassSpecifierNode(span, BaseSpecifiers, ClassName); }
+            ;
+
+        BaseSpecifiers : Specifier
+            ::= (BaseSpecifier{ value = value | BaseSpecifier; })*
+            ;
+
+        BaseSpecifier : Specifier
+            ::= keyword("virtual"){ value = Specifier::virtual_; }
+            |   AccessSpecifier{ value = AccessSpecifier; }
+            ;
+
+        AccessSpecifier : Specifier
+            ::= keyword("public"){ value = Specifier::public_; }
+            |   keyword("protected"){ value = Specifier::protected_; }
+            |   keyword("private"){ value = Specifier::private_; }
+            ;
+
+        VirtPureSpecifiers(bool functionMember) : Specifier
+            ::= (VirtSpecifier(functionMember){ value = value | VirtSpecifier; })* (PureSpecifier(functionMember){ value = value | PureSpecifier; })?
+            ;
+
+        VirtSpecifier(bool functionMember) : Specifier
+            ::= keyword("override"){ pass = functionMember; value = Specifier::override_; }
+            |   keyword("final"){ pass = functionMember; value = Specifier::final_; }
+            |   keyword("new"){ pass = functionMember; value = Specifier::new_; }
+            ;
+
+        PureSpecifier(bool functionMember) : Specifier
+            ::= ('=' '0'){ pass = functionMember; value = Specifier::pure_; }
+            ;
+
+        SpecialMemberFunctionDefinition(var std::unique_ptr<Node> declarator, var std::unique_ptr<Node> ctorInitializer, var Specifier defaultOrDeleteSpecifier, 
+            ParsingContext* ctx) : Node*
+            ::= (DeclSpecifiers Declarator(ctx){ declarator.reset(Declarator); pass = IsFunctionDeclarator(declarator.get()); } 
+                (CtorInitializer(ctx){ ctorInitializer.reset(CtorInitializer); })? 
+                    (   FunctionBody(ctx) 
+                    |  '=' (keyword("default"){ defaultOrDeleteSpecifier = Specifier::default_; } | keyword("delete"){ defaultOrDeleteSpecifier = Specifier::delete_; }) ';'
+                    ) 
+                )
+                {
+                    value = new SpecialMemberFunctionNode(span, DeclSpecifiers | defaultOrDeleteSpecifier, declarator.release(), ctorInitializer.release(), FunctionBody);
+                }
+            ;
+
+        CtorInitializer(ParsingContext* ctx) : Node*
+            ::= (':' MemberInitializerList(ctx)){ value = new CtorInitializerNode(span, MemberInitializerList); }
+            ;
+
+        MemberInitializerList(var std::unique_ptr<Node> list, ParsingContext* ctx) : Node*
+            ::= (MemberInitializer(ctx):left{ list.reset(left); } 
+                (',' MemberInitializer(ctx):right{ list.reset(new MemberInitializerSequenceNode(span, list.release(), right)); })*)
+            {
+                value = list.release();
+            }
+            ;
+
+        MemberInitializer(var std::unique_ptr<Node> id, ParsingContext* ctx, var Span exprListSpan) : MemberInitializerNode*
+            ::= (MemberInitializerId(ctx):id1{ id.reset(id1); } ('(' PossiblyEmptyArgumentList(ctx):args ')'){ exprListSpan = span; })
+                { 
+                    value = new MemberInitializerNode(span, id.release(), new ExpressionListInitializerNode(exprListSpan, args)); 
+                }
+            |   (MemberInitializerId(ctx):id2{ id.reset(id2); } BracedInitializerList(ctx))
+                {
+                    value = new MemberInitializerNode(span, id.release(), BracedInitializerList); 
+                }
+            ;
+
+        MemberInitializerId(ParsingContext* ctx) : Node*
+            ::= QualifiedIdNode(ctx){ value = QualifiedIdNode; }
+            ;
+    }
+}

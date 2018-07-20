@@ -1,0 +1,41 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/SourceFile.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar IncludeDirective
+    {
+        using stdlib.newline;
+
+        SourceFile(SourceFileNode* sourceFileNode)
+            ::= SourceLine(sourceFileNode)*
+            ;
+
+        SourceLine(SourceFileNode* sourceFile)
+            ::= IncludeDirectiveLine(sourceFile)
+            |   OtherLine
+            ;
+
+        IncludeDirectiveLine(SourceFileNode* sourceFile)
+            ::= token(S* '#' S* keyword("include") S* FilePath (anychar - newline)* newline){ sourceFile->AddIncludeDirective(new IncludeDirectiveNode(span, FilePath)); }
+            ;
+
+        OtherLine
+            ::= (anychar - newline)* newline
+            ;
+
+        FilePath : std::string
+            ::= '<' ([^>]*){ value = ToUtf8(std::u32string(matchBegin, matchEnd)); } '>'
+            |   '"' ([^"]*){ value = ToUtf8(std::u32string(matchBegin, matchEnd)); } '"'
+            ;
+
+        S   ::= (' ' | '\t')+
+            ;
+    }
+}

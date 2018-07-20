@@ -1,0 +1,82 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Declarator.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[hpp]#include <gendoc/cppast/Expression.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/Expression.hpp>
+[cpp]#include <gendoc/cppparser/Function.hpp>
+[cpp]#include <gendoc/cppparser/TypeExpr.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Declarator
+    {
+        using Expression.ExpressionList;
+        using Expression.ConstantExpression;
+        using Expression.AssignmentExpression;
+        using Expression.IdExpression;
+        using Function.ParameterList;
+        using TypeExpr.CVSpecifierSequence;
+        using Identifier.Identifier;
+        using Identifier.NestedNameSpecifier;
+
+        InitDeclarator(var std::unique_ptr<Node> declarator, var Span s, ParsingContext* ctx) : Node*
+            ::= Declarator(ctx){ declarator.reset(Declarator); s = span; }
+                (   Initializer(ctx){ s.SetEnd(span.End()); value = new InitDeclaratorNode(s, declarator.release(), Initializer); }
+                |   empty{ value = declarator.release(); }
+                )
+            ;
+
+        Declarator(var std::unique_ptr<Node> node, var Span s, ParsingContext* ctx) : Node*
+            ::= (
+                    (   IdExpression(ctx){ node.reset(new IdDeclaratorNode(span, IdExpression)); s = span; } 
+                    |   ('(' '*' Identifier:id1 ')'){ node.reset(new FunctionPtrIdNode(span, id1)); }
+                    |   ('(' NestedNameSpecifier(ctx){ node.reset(NestedNameSpecifier); } '*' Identifier:id2 ')'){ node.reset(new MemberFunctionPtrIdNode(span, node.release(), id2)); }
+                    )
+                        (   (empty{ pass = !ctx->InFunctionBody(); } ParameterList(ctx) CVSpecifierSequence){ s.SetEnd(span.End()); node.reset(new FunctionDeclaratorNode(s, node.release(), ParameterList, CVSpecifierSequence)); }
+                        |   (('[' ConstantExpression(ctx):size? ']'!){ s.SetEnd(span.End()); node.reset(new ArrayDeclaratorNode(s, node.release(), size)); })*
+                        )
+            )
+            {
+                value = node.release();
+            }
+            ;
+
+        Initializer(ParsingContext* ctx) : Node*
+            ::= ('=' InitializerClause(ctx)){ value = new AssignmentInitializerNode(span, InitializerClause); }
+            |   ('(' ExpressionList(ctx) ')'){ value = new ExpressionListInitializerNode(span, ExpressionList); }
+            |   BracedInitializerList(ctx){ value = BracedInitializerList; }
+            ;
+
+        BraceOrEqualInitializer(ParsingContext* ctx) : Node*
+            ::= ('=' InitializerClause(ctx)){ value = new AssignmentInitializerNode(span, InitializerClause); }
+            |   BracedInitializerList(ctx){ value = BracedInitializerList; }
+            ;
+
+        BracedInitializerList(var std::unique_ptr<BracedInitializerListNode> node, var Span s, ParsingContext* ctx) : BracedInitializerListNode*
+            ::= '{'{ node.reset(new BracedInitializerListNode(span)); s = span; } 
+                (InitializerClause(ctx):left{ s.SetEnd(span.End()); node->AddInitializer(s, left); } 
+                (',' InitializerClause(ctx):right{ s.SetEnd(span.End()); node->AddInitializer(s, right); })*)? 
+                '}'{ node->SetEndBraceSpan(span); node->SetSpanEnd(span.End()); value = node.release(); }
+            ;
+
+        InitializerClause(ParsingContext* ctx) : Node*
+            ::= AssignmentExpression(ctx){ value = new ExpressionInitializerNode(span, AssignmentExpression); }
+            |   BracedInitializerList(ctx){ value = BracedInitializerList; }
+            ;
+
+        InitializerList(var std::unique_ptr<Node> node, var Span s, ParsingContext* ctx) : Node*
+            ::= (InitializerClause(ctx):left{ node.reset(left); s = span; } 
+                (',' InitializerClause(ctx):right{ s.SetEnd(span.End()); node.reset(new ExpressionSequenceNode(s, node.release(), right)); })*)
+            {
+                value = node.release();
+            }
+            ;
+    }
+}

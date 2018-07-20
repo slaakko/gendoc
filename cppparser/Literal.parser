@@ -1,0 +1,136 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Literal.hpp>
+[cpp]#include <sstream>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Literal
+    {
+        using stdlib.digit_sequence;
+        using stdlib.sign;
+        using stdlib.escape;
+
+        Literal : LiteralNode*
+            ::= FloatingLiteral{ value = FloatingLiteral; }
+            |   IntegerLiteral{ value = IntegerLiteral; }
+            |   CharacterLiteral{ value = CharacterLiteral; }
+            |   StringLiteral{ value = StringLiteral; }
+            |   BooleanLiteral{ value = BooleanLiteral; }
+            |   PointerLiteral{ value = PointerLiteral; }
+            ;
+
+        FloatingLiteral(var std::string m, var Suffix suffix) : FloatingLiteralNode*
+            ::= 
+            (   token((FractionalConstant ExponentPart?){ m = ToUtf8(std::u32string(matchBegin, matchEnd)); } (FloatingSuffix:s1{ suffix = s1; })?)
+            |   token((digit_sequence ExponentPart){ m = ToUtf8(std::u32string(matchBegin, matchEnd)); } (FloatingSuffix:s2{ suffix = s2; })?)
+            )
+            {
+                std::stringstream s;
+                s.str(m);
+                double x;
+                s >> x;
+                value = new FloatingLiteralNode(span, x, suffix, std::u32string(matchBegin, matchEnd));
+            }
+            ;
+
+        FractionalConstant 
+            ::= token(digit_sequence? '.' digit_sequence)
+            |   token(digit_sequence '.')
+            ;
+
+        ExponentPart
+            ::= token([eE] sign? digit_sequence)
+            ;
+
+        FloatingSuffix : Suffix
+            ::= [fF]{ value = Suffix::f; } | [lL]{ value = Suffix::l; }
+            ;
+
+        IntegerLiteral(var uint64_t x, var Suffix suffix, var Base base) : IntegerLiteralNode*
+            ::= 
+            (   token(HexadecimalLiteral:hl{ x = hl; base = Base::hex; } (IntegerSuffix:s3{ suffix = s3; })?)
+            |   token(OctalLiteral:ol{ x = ol; base = Base::octal; } (IntegerSuffix:s2{ suffix = s2; })?)
+            |   token(DecimalLiteral:dl{ x = dl; base = Base::decimal; } (IntegerSuffix:s1{ suffix = s1; })?)
+            )
+            {
+                value = new IntegerLiteralNode(span, x, suffix, base, std::u32string(matchBegin, matchEnd));
+            }
+            ;
+
+        DecimalLiteral : uint64_t
+            ::= token([1-9] digit*)
+            { 
+                std::stringstream s;
+                s.str(ToUtf8(std::u32string(matchBegin, matchEnd)));
+                s >> value;
+            }
+            ;
+
+        OctalLiteral : uint64_t
+            ::= token('0' ([0-7]{ value = 8 * value + *matchBegin - U'0'; })*)
+            ;
+
+        HexadecimalLiteral : uint64_t
+            ::= token(("0x" | "0X") (hexdigit+){ std::stringstream s; s.str(ToUtf8(std::u32string(matchBegin, matchEnd))); s >> std::hex >> value; })
+            ;
+
+        IntegerSuffix : Suffix
+            ::= token([uU]{ value = Suffix::u; } (("ll" | "LL"){ value = value | Suffix::ll; })?)
+            |   token([uU]{ value = Suffix::u; } ([lL]{ value = value | Suffix::l; })?)
+            |   token(("ll" | "LL"){ value = Suffix::ll; } ([uU]{ value = value | Suffix::u; })?)
+            |   token([lL]{ value = Suffix::l; } ([uU]{ value = value | Suffix::u; })?)
+            ;
+
+        CharacterLiteral(var char32_t prefix, var std::u32string chars) : CharacterLiteralNode*
+            ::= token(([uUL]{ prefix = *matchBegin; })? '\'' (CChar{ chars.append(1, CChar); })+ '\'')
+                { 
+                    value = new CharacterLiteralNode(span, prefix, chars, std::u32string(matchBegin, matchEnd)); 
+                }
+            ;
+
+        CChar : char32_t
+            ::= [^\r\n\\']{ value = *matchBegin; } | escape{ value = escape; } | 'u' HexDigit4{ value = char32_t(HexDigit4); } | 'U' HexDigit8{ value = char32_t(HexDigit8); }
+            ;
+
+        HexDigit4 : uint16_t
+            ::= token(hexdigit hexdigit hexdigit hexdigit){ std::stringstream s; s.str(ToUtf8(std::u32string(matchBegin, matchEnd))); s >> std::hex >> value; }
+            ;
+
+        HexDigit8 : uint32_t
+            ::= token(HexDigit4:h1 HexDigit4:h2){ std::stringstream s; s.str(ToUtf8(std::u32string(matchBegin, matchEnd))); s >> std::hex >> value; }
+            ;
+
+        StringLiteral(var std::u32string encodingPrefix, var std::u32string chars) : StringLiteralNode*
+            ::= 
+            (   token((EncodingPrefix:e1{ encodingPrefix = e1; })? '"' (SChar{ chars.append(1, SChar); })* '"')
+            |   token((EncodingPrefix:e2{ encodingPrefix = e2; })? 'R' '"' ([^\r\n"]{ chars.append(1, *matchBegin); })* '"')
+            )
+            {
+                value = new StringLiteralNode(span, encodingPrefix, chars, std::u32string(matchBegin, matchEnd)); 
+            }
+            ;
+
+        EncodingPrefix : std::u32string
+            ::= "u8" | 'u' | 'U' | 'L'
+            ;
+
+        SChar : char32_t
+            ::= [^\r\n\\"]{ value = *matchBegin; } | escape{ value = escape; } | 'u' HexDigit4{ value = char32_t(HexDigit4); } | 'U' HexDigit8{ value = char32_t(HexDigit8); }
+            ;
+
+        BooleanLiteral : LiteralNode*
+            ::= keyword("true"){ value = new BooleanLiteralNode(span, true, std::u32string(matchBegin, matchEnd)); }
+            |   keyword("false"){ value = new BooleanLiteralNode(span, false, std::u32string(matchBegin, matchEnd)); }
+            ;
+
+        PointerLiteral : LiteralNode*
+            ::= keyword("nullptr"){ value = new NullPtrLiteralNode(span, std::u32string(matchBegin, matchEnd)); }
+            ;
+    }
+}

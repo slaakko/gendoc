@@ -1,0 +1,85 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/SourceCodeWriter.hpp>
+[cpp]#include <gendoc/cppparser/Keyword.hpp>
+[cpp]#include <gendoc/syntax/Element.hpp>
+[cpp]#include <gendoc/syntax/Primitive.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar ParserToken
+    {
+        using CppKeyword = Keyword.Keyword;
+        using ParserKeyword = gendoc.syntax.Element.Keyword;
+        using stdlib.identifier;
+        using stdlib.string;
+        using stdlib.char;
+        using stdlib.escape;
+
+        SourceLine(SourceCodeWriter* writer)
+            ::= SourceToken(writer)*
+            ;
+            
+        SourceToken(SourceCodeWriter* writer)
+            ::= LineComment{ writer->WriteComment(std::u32string(matchBegin, matchEnd)); }
+            |   BlockComment{ writer->WriteComment(std::u32string(matchBegin, matchEnd)); }
+            |   PPLine{ writer->WritePP(std::u32string(matchBegin, matchEnd)); }
+            |   CppKeyword{ writer->WriteKeyword(std::u32string(matchBegin, matchEnd)); }
+            |   ParserKeyword{ writer->WriteKeyword(std::u32string(matchBegin, matchEnd)); }
+            |   identifier{ writer->WriteIdentifier(std::u32string(matchBegin, matchEnd)); }
+            |   CharSet{ writer->WriteString(std::u32string(matchBegin, matchEnd)); }
+            |   string{ writer->WriteString(std::u32string(matchBegin, matchEnd)); }
+            |   char{ writer->WriteString(std::u32string(matchBegin, matchEnd)); }
+            |   (Space+){ writer->WriteSpace(matchEnd - matchBegin); }
+            |   anychar{ writer->WriteOther(std::u32string(matchBegin, matchEnd)); }
+            ;
+
+        LineComment
+            ::= "//" [^\r\n]*
+            ;
+
+        BlockComment
+            ::= "/*" (anychar - "*/")* "*/"?
+            ;
+
+        PPLine
+            ::= Space* ("[cpp]" | "[hpp]")? Space* '#' [^\r\n]*
+            ;
+
+        CharSet(var bool inverse, var std::u32string s)
+                        ::= token
+                            (   '['
+                                ('^'{ inverse = true; })?
+                                (CharSetRange{ s.append(CharSetRange); })*
+                                ']'?
+                            )
+                            ;
+
+        CharSetRange: std::u32string
+                            ::= CharSetChar:first
+                            ('-' CharSetChar:last
+                                {
+                                    value.append(1, first);
+                                    value.append(1, '-');
+                                    value.append(1, last);
+                                }
+                            |   empty{ value.append(1, first); }
+                            )
+                            ;
+
+        CharSetChar: char32_t
+                            ::= [^\\\]]{ value = *matchBegin; }
+                            |   escape{ value = escape; }
+                            ;
+
+
+        Space
+            ::= [\t ]
+            ;
+    }
+}

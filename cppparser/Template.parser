@@ -1,0 +1,87 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Template.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Declaration.hpp>
+[cpp]#include <gendoc/cppparser/Function.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/TypeExpr.hpp>
+[cpp]#include <gendoc/cppparser/Expression.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Template
+    {
+        using Declaration.Declaration;
+        using Function.ParameterDeclaration;
+        using Identifier.Identifier;
+        using TypeExpr.TypeExpr;
+        using Expression.ConditionalExpression;
+
+        TemplateDeclaration(ParsingContext* ctx) : Node*
+            ::= (keyword("template") '<' TemplateParameterList(ctx)! '>'! Declaration(ctx)!){ value = new TemplateDeclarationNode(span, TemplateParameterList, Declaration); }
+            ;
+
+        TemplateParameterList(var std::unique_ptr<Node> node, var Span s, ParsingContext* ctx) : Node*
+            ::= (TemplateParameter(ctx):left{ node.reset(left); s = span; } 
+                (',' TemplateParameter(ctx):right{ s.SetEnd(span.End()); node.reset(new TemplateParameterSequenceNode(s, node.release(), right)); })*)
+            {
+                value = node.release();
+            }
+            ;
+
+        TemplateParameter(ParsingContext* ctx) : Node*
+            ::= TypeParameter(ctx){ value = TypeParameter; }
+            |   ParameterDeclaration(ctx){ value = ParameterDeclaration; }
+            ;
+ 
+        TypeParameter(ParsingContext* ctx, var bool typenameUsed) : Node*
+            ::= ((keyword("class"){ typenameUsed = false; } | keyword("typename"){ typenameUsed = true; }) 
+                Identifier ('=' TypeExpr(ctx))?){ value = new TypeParameterNode(span, Identifier, TypeExpr, typenameUsed); }
+            ;
+
+        SimpleTemplateId(var std::unique_ptr<Node> args, var int arity, ParsingContext* ctx) : Node*
+            ::= (TemplateName 
+                '<'{ ctx->BeginParsingTemplateId(); } 
+                (TemplateArgumentList(ctx, &arity){ args.reset(TemplateArgumentList); })? 
+                '>'{ ctx->EndParsingTemplateId(); } / { ctx->EndParsingTemplateId(); })
+            { 
+                value = new TemplateIdNode(span, TemplateName, args.release(), arity); 
+            }
+            ;
+
+        TemplateId(ParsingContext* ctx) : Node*
+            ::= SimpleTemplateId(ctx){ value = SimpleTemplateId; }
+            ;
+
+        TemplateName : IdentifierNode*
+            ::= Identifier{ value = new IdentifierNode(span, Identifier); }
+            ;
+
+        TemplateArgumentList(var std::unique_ptr<Node> arg, ParsingContext* ctx, int* arity) : Node*
+            ::= (TemplateArgument(ctx):left{ arg.reset(new TemplateArgumentNode(span, left)); ++*arity; } 
+                (',' TemplateArgument(ctx):right{ arg.reset(new TemplateArgumentSequenceNode(span, arg.release(), new TemplateArgumentNode(span, right))); ++*arity; })*)
+            {
+                value = arg.release();
+            }
+            ;
+
+        TemplateArgument(ParsingContext* ctx) : Node*
+            ::= TypeExpr(ctx){ value = TypeExpr; }
+            |   ConditionalExpression(ctx){ value = ConditionalExpression; }
+            ;
+
+        ExplicitInstantiation(ParsingContext* ctx) : Node*
+            ::= (keyword("template") Declaration(ctx)){ value = new ExplicitInstantiationNode(span, Declaration); }
+            ;
+
+        ExplicitSpecialization(ParsingContext* ctx) : Node*
+            ::= (keyword("template") '<' '>' Declaration(ctx)){ value = new ExplicitSpecializationNode(span, Declaration); }
+            ;
+    }
+}

@@ -1,0 +1,133 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Statement.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/Expression.hpp>
+[cpp]#include <gendoc/cppparser/TypeExpr.hpp>
+[cpp]#include <gendoc/cppparser/Declarator.hpp>
+[cpp]#include <gendoc/cppparser/Declaration.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Statement
+    {
+        using Identifier.Identifier;
+        using Expression.Expression;
+        using Expression.ConstantExpression;
+        using TypeExpr.TypeExpr;
+        using Declarator.Declarator;
+        using Declarator.InitializerClause;
+        using Declarator.BracedInitializerList;
+        using Declaration.SimpleDeclaration;
+        using Declaration.BlockDeclaration;
+
+        Statement(ParsingContext* ctx) : Node*
+            ::= LabeledStatement(ctx){ value = LabeledStatement; }
+            |   ExpressionStatement(ctx){ value = ExpressionStatement; }
+            |   CompoundStatement(ctx){ value = CompoundStatement; }
+            |   SelectionStatement(ctx){ value = SelectionStatement; }
+            |   IterationStatement(ctx){ value = IterationStatement; }
+            |   JumpStatement(ctx){ value = JumpStatement; }
+            |   DeclarationStatement(ctx){ value = DeclarationStatement; }
+            |   TryBlock(ctx){ value = TryBlock; }
+            ;
+
+        LabeledStatement(ParsingContext* ctx) : Node*
+            ::= (Identifier (':' - "::") Statement(ctx):ls){ value = new LabeledStatementNode(span, Identifier, ls); }
+            |   (keyword("case") ConstantExpression(ctx)! ':'! Statement(ctx):cs!){ value = new CaseStatementNode(span, ConstantExpression, cs); }
+            |   (keyword("default") ':'! Statement(ctx):ds!){ value = new DefaultStatementNode(span, ds); }
+            ;
+
+        ExpressionStatement(ParsingContext* ctx) : Node*
+            ::= (Expression(ctx)? ';'){ value = new ExpressionStatementNode(span, Expression); }
+            ;
+
+        CompoundStatement(var std::unique_ptr<CompoundStatementNode> node, ParsingContext* ctx) : CompoundStatementNode*
+            ::= '{'{ node.reset(new CompoundStatementNode(span)); } (Statement(ctx){ node->AddStatement(span, Statement); })* '}'!
+                { node->SetEndBraceSpan(span); value = node.release(); }
+            ;
+
+        SelectionStatement(ParsingContext* ctx, var Span elseSpan) : Node*
+            ::= (keyword("if") '('! Condition(ctx):c1! ')'! Statement(ctx):thenS! (keyword("else"){ elseSpan = span; } Statement(ctx):elseS!)?){ value = new IfStatementNode(span, c1, thenS, elseS, elseSpan); }
+            |   (keyword("switch") '('! Condition(ctx):c2! ')'! Statement(ctx)!){ value = new SwitchStatementNode(span, c2, Statement); }
+            ;
+
+        Condition(var std::unique_ptr<Node> typeExpr, var std::unique_ptr<Node> declarator, var Span s, ParsingContext* ctx) : Node*
+            ::= (TypeExpr(ctx){ typeExpr.reset(TypeExpr); } Declarator(ctx){ declarator.reset(Declarator); }){ s = span; } 
+                (   '=' InitializerClause(ctx)
+                    { 
+                        s.SetEnd(span.End()); 
+                        value = new SimpleDeclarationNode(s, Specifier::none, typeExpr.release(), new InitDeclaratorNode(s, declarator.release(), new AssignmentInitializerNode(s, InitializerClause))); 
+                    }
+                |   BracedInitializerList(ctx)
+                    {
+                        s.SetEnd(span.End()); 
+                        value = new SimpleDeclarationNode(s, Specifier::none, typeExpr.release(), new InitDeclaratorNode(s, declarator.release(), BracedInitializerList)); 
+                    }
+                )
+            |   Expression(ctx){ value = Expression; }
+            ;
+
+        IterationStatement(var std::unique_ptr<Node> forRange, ParsingContext* ctx, var Span whileSpan) : Node*
+            ::= (keyword("while") '('! Condition(ctx):c1! ')'! Statement(ctx):s1!){ value = new WhileStatementNode(span, c1, s1); }
+            |   (keyword("do") Statement(ctx):s2 keyword("while")!{ whileSpan = span; } '('! Expression(ctx):c2! ')'! ';'!){ value = new DoStatementNode(span, s2, c2, whileSpan); }
+            |   (keyword("for") '(' ForRangeDeclaration(ctx){ forRange.reset(ForRangeDeclaration); } ':' ForRangeInitializer(ctx)! ')'! Statement(ctx):s3!)
+                { 
+                    value = new RangeForStatementNode(span, forRange.release(), ForRangeInitializer, s3);
+                }
+            |   (keyword("for") '(' ForInitStatement(ctx) Condition(ctx):c4? ';' Expression(ctx):loopExpr? ')'! Statement(ctx):s4!)
+                {
+                    value = new ForStatementNode(span, ForInitStatement, c4, loopExpr, s4);
+                }
+            ;
+
+        ForInitStatement(ParsingContext* ctx) : Node*
+            ::= ExpressionStatement(ctx){ value = ExpressionStatement; }
+            |   SimpleDeclaration(ctx){ value = SimpleDeclaration; }
+            ;
+
+        ForRangeDeclaration(var std::unique_ptr<Node> typeExpr, ParsingContext* ctx) : Node*
+            ::= (TypeExpr(ctx){ typeExpr.reset(TypeExpr); } Declarator(ctx)){ value = new SimpleDeclarationNode(span, Specifier::none, typeExpr.release(), Declarator); }
+            ;
+
+        ForRangeInitializer(ParsingContext* ctx) : Node*
+            ::= Expression(ctx){ value = Expression; }
+            |   BracedInitializerList(ctx){ value = BracedInitializerList; }
+            ;
+
+        JumpStatement(ParsingContext* ctx) : Node*
+            ::= (keyword("break") ';'!){ value = new BreakStatementNode(span); }
+            |   (keyword("continue") ';'!){ value = new ContinueStatementNode(span); }
+            |   (keyword("return") Expression(ctx)? ';'!){ value = new ReturnStatementNode(span, Expression); }
+            |   (keyword("return") BracedInitializerList(ctx) ';'!){ value = new ReturnStatementNode(span, BracedInitializerList); }
+            |   (keyword("goto") Identifier! ';'!){ value = new GotoStatementNode(span, Identifier); }
+            ;
+
+        DeclarationStatement(ParsingContext* ctx) : Node*
+            ::= BlockDeclaration(ctx){ value = new DeclarationStatementNode(span, BlockDeclaration); }
+            ;
+
+        TryBlock(ParsingContext* ctx) : TryStatementNode*
+            ::= (keyword("try") CompoundStatement(ctx)!){ value = new TryStatementNode(span, CompoundStatement); } HandlerSequence(value, ctx)!
+            ;
+
+        HandlerSequence(TryStatementNode* tryStatementNode, ParsingContext* ctx)
+            ::= (Handler(ctx){ tryStatementNode->AddHandler(span, Handler); })+
+            ;
+
+        Handler(ParsingContext* ctx) : Node*
+            ::= (keyword("catch") '('! ExceptionDeclaration(ctx)! ')'! CompoundStatement(ctx)!){ value = new HandlerNode(span, ExceptionDeclaration, CompoundStatement); }
+            ;
+
+        ExceptionDeclaration(var std::unique_ptr<Node> typeExpr, ParsingContext* ctx) : Node*
+            ::= (TypeExpr(ctx){ typeExpr.reset(TypeExpr); } Declarator(ctx)?){ value = new SimpleDeclarationNode(span, Specifier::none, typeExpr.release(), Declarator); }
+            |   ("..."){ value = new CatchAllNode(span); }
+            ;
+    }
+}

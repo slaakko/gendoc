@@ -1,0 +1,47 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Expression.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Keyword.hpp>
+[cpp]#include <gendoc/cppparser/Template.hpp>
+
+namespace gendoc.cppparser
+{
+    using namespace gendoc::cppast;
+
+    grammar Identifier
+    {
+        using stdlib.identifier;
+        using Keyword.Keyword;
+        using Template.SimpleTemplateId;
+
+        Identifier : std::u32string
+            ::= (identifier - Keyword){ value = identifier; }
+            ;
+
+        IdNode(ParsingContext* ctx) : Node*
+            ::= SimpleTemplateId(ctx){ value = SimpleTemplateId; }
+            |   Identifier{ value = new IdentifierNode(span, Identifier); }
+            ;
+
+        NestedNameSpecifier(var std::unique_ptr<Node> node, ParsingContext* ctx) : Node*
+            ::= (IdNode(ctx):left{ node.reset(left); } "::" (IdNode(ctx):right "::"{ node.reset(new NestedIdNode(span, node.release(), right)); })*)
+            {
+                value = node.release();
+            }
+            ;
+
+        QualifiedIdNode(var std::unique_ptr<Node> node, ParsingContext* ctx) : Node*
+            ::= (("::" NestedNameSpecifier(ctx):ns1{ node.reset(ns1); } IdNode(ctx):id1){ node.reset(new NestedIdNode(span, new NestedIdNode(span, nullptr, node.release()), id1)); }
+            |   (NestedNameSpecifier(ctx):ns2{ node.reset(ns2); } IdNode(ctx):id2){ node.reset(new NestedIdNode(span, node.release(), id2)); }
+            |   IdNode(ctx):id3{ node.reset(id3); }
+            )
+            {
+                value = node.release();
+            }
+            ;
+    }
+}

@@ -1,0 +1,49 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/parsing/Scope.hpp>
+[hpp]#include <gendoc/parsing/Parser.hpp>
+[cpp]#include <gendoc/parsing/Composite.hpp>
+[cpp]#include <gendoc/syntax/Primary.hpp>
+
+namespace gendoc.syntax
+{
+    grammar Composite
+    {
+        using Primary.Primary;
+
+        Alternative(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Parser*
+                        ::= Sequence(enclosingScope):left{ value = left; } ('|' Sequence(enclosingScope):right!{ value = new AlternativeParser(value, right); })*
+                        ;
+
+        Sequence(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Parser*
+                        ::= Difference(enclosingScope):left{ value = left; } (Difference(enclosingScope):right{ value = new SequenceParser(value, right); })*
+                        ;
+
+        Difference(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Parser*
+                        ::= ExclusiveOr(enclosingScope):left{ value = left; } ('-' ExclusiveOr(enclosingScope):right!{ value = new DifferenceParser(value, right); })*
+                        ;
+
+        ExclusiveOr(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Parser*
+                        ::= Intersection(enclosingScope):left{ value = left; } ('^' Intersection(enclosingScope):right!{ value = new ExclusiveOrParser(value, right); })*
+                        ;
+
+        Intersection(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Parser*
+                        ::= List(enclosingScope):left{ value = left; } ('&' List(enclosingScope):right{ value = new IntersectionParser(value, right); })*
+                        ;
+
+        List(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Parser* 
+                        ::= Postfix(enclosingScope):left{ value = left; } ('%' Postfix(enclosingScope):right{ value = new ListParser(value, right); })?
+                        ;
+
+        Postfix(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Parser*
+                        ::= Primary(enclosingScope){ value = Primary; }
+                        (   '*'{ value = new KleeneStarParser(value); }
+                        |   '+'{ value = new PositiveParser(value); }
+                        |   '?'{ value = new OptionalParser(value); }
+                        )?
+                        ;
+    }
+}

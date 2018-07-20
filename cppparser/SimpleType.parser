@@ -1,0 +1,38 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/SimpleType.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar SimpleType
+    {
+        SimpleType(var std::vector<SimpleTypeSpecifier> specifiers) : SimpleTypeNode*
+            ::= ((SimpleTypeSpecifier:s{ specifiers.push_back(s); })+)
+            {
+                value = new SimpleTypeNode(span, specifiers); 
+            }
+            ;
+
+        SimpleTypeSpecifier : SimpleTypeSpecifier
+            ::= keyword("char"){ value = SimpleTypeSpecifier::char_; }
+            |   keyword("char16_t"){ value = SimpleTypeSpecifier::char16; }
+            |   keyword("char32_t"){ value = SimpleTypeSpecifier::char32; }
+            |   keyword("wchar_t"){ value = SimpleTypeSpecifier::wchar; }
+            |   keyword("bool"){ value = SimpleTypeSpecifier::bool_; }
+            |   keyword("short"){ value = SimpleTypeSpecifier::short_; }
+            |   keyword("int"){ value = SimpleTypeSpecifier::int_; }
+            |   keyword("long"){ value = SimpleTypeSpecifier::long_; }
+            |   keyword("signed"){ value = SimpleTypeSpecifier::signed_; }
+            |   keyword("unsigned"){ value = SimpleTypeSpecifier::unsigned_; }
+            |   keyword("float"){ value = SimpleTypeSpecifier::float_; }
+            |   keyword("double"){ value = SimpleTypeSpecifier::double_; }
+            |   keyword("void"){ value = SimpleTypeSpecifier::void_; }
+            |   keyword("auto"){ value = SimpleTypeSpecifier::auto_; }
+            ;
+    }
+}

@@ -1,0 +1,40 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Declaration.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar CppSourceFile
+    {
+        using stdlib.comment;
+        using stdlib.newline;
+        using Declaration.Declaration;
+        skip CommentsAndSpacesAndPPLines;
+
+        SourceFile(var ParsingContext ctx, SourceFileNode* sourceFile)
+            ::= empty{ ctx.SetSourceFileNode(sourceFile); } 
+                Declarations(sourceFile->GlobalNs(), &ctx)
+            ;
+
+        Declarations(NamespaceNode* ns, ParsingContext* ctx)
+            ::= (Declaration(ctx){ ns->AddMember(span, Declaration); })*
+            ;
+
+        CommentsAndSpacesAndPPLines
+            ::= (PPLine | comment | space)+
+            ;
+
+        PPLine
+            ::= token(S* '#' (anychar - newline)* newline)
+            ;
+
+        S   ::= (' ' | '\t')+
+            ;
+    }
+}

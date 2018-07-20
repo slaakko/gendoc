@@ -1,0 +1,143 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Namespace.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[hpp]#include <gendoc/cppparser/TypeExpr.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/CppSourceFileGrammar.hpp>
+[cpp]#include <gendoc/cppparser/Declarator.hpp>
+[cpp]#include <gendoc/cppparser/Function.hpp>
+[cpp]#include <gendoc/cppparser/Template.hpp>
+[cpp]#include <gendoc/cppparser/Class.hpp>
+[cpp]#include <gendoc/cppparser/Enumeration.hpp>
+[hpp]#include <gendoc/cppparser/Literal.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Declaration
+    {
+        using CppSourceFile.Declarations;
+        using Declarator.InitDeclarator;
+        using Declarator.Declarator;
+        using Identifier.Identifier;
+        using Identifier.QualifiedIdNode;
+        using TypeExpr.TypeExpr;
+        using Function.FunctionDefinition;
+        using Class.SpecialMemberFunctionDefinition;
+        using Template.TemplateDeclaration;
+        using Template.ExplicitInstantiation;
+        using Template.ExplicitSpecialization;
+        using Class.ClassDeclaration;
+        using Class.ForwardClassDeclaration;
+        using Enumeration.EnumDeclaration;
+        using Enumeration.OpaqueEnumDeclaration;
+        using Literal.StringLiteral;
+
+        Declaration(ParsingContext* ctx) : Node*
+            ::= NamespaceDefinition(ctx){ value = NamespaceDefinition; }
+            |   FunctionDefinition(ctx){ value = FunctionDefinition; }
+            |   SpecialMemberFunctionDefinition(ctx){ value = SpecialMemberFunctionDefinition; }
+            |   TemplateDeclaration(ctx){ value = TemplateDeclaration; }
+            |   ExplicitInstantiation(ctx){ value = ExplicitInstantiation; }
+            |   ExplicitSpecialization(ctx){ value = ExplicitSpecialization; }
+            |   ClassDeclaration(ctx){ value = ClassDeclaration; }
+            |   EnumDeclaration(ctx){ value = EnumDeclaration; }
+            |   LinkageSpecification(ctx){ value = LinkageSpecification; }
+            |   BlockDeclaration(ctx){ value = BlockDeclaration; }
+            ;
+
+        NamespaceDefinition(ParsingContext* ctx) : Node*
+            ::= NamedNamespaceDefinition(ctx){ value = NamedNamespaceDefinition; }
+            |   UnnamedNamespaceDefinition(ctx){ value = UnnamedNamespaceDefinition; }
+            ;
+
+        NamedNamespaceDefinition(var std::unique_ptr<NamespaceNode> ns, ParsingContext* ctx) : NamespaceNode*
+            ::= (keyword("namespace") Identifier '{'{ ns.reset(new NamespaceNode(span, Identifier)); } Declarations(ns.get(), ctx) '}'!){ value = ns.release(); }
+            ;
+
+        UnnamedNamespaceDefinition(var std::unique_ptr<NamespaceNode> ns, ParsingContext* ctx) : NamespaceNode*
+            ::= (keyword("namespace") '{'{ ns.reset(new NamespaceNode(span)); } Declarations(ns.get(), ctx) '}'!){ value = ns.release(); }
+            ;
+
+        BlockDeclaration(ParsingContext* ctx) : Node*
+            ::= SimpleDeclaration(ctx){ value = SimpleDeclaration; }
+            |   AliasDeclaration(ctx){ value = AliasDeclaration; }
+            |   UsingDirective(ctx){ value = UsingDirective; }
+            |   UsingDeclaration(ctx){ value = UsingDeclaration; }
+            |   OpaqueEnumDeclaration(ctx){ value = OpaqueEnumDeclaration; }
+            |   TypedefDeclaration(ctx){ value = TypedefDeclaration; }
+            |   ForwardClassDeclaration(ctx){ value = ForwardClassDeclaration; } 
+            ;
+
+        SimpleDeclaration(var std::unique_ptr<Node> typeExpr, var std::unique_ptr<Node> initDeclarator, ParsingContext* ctx) : Node*
+            ::= (DeclSpecifiers TypeExpr(ctx){ typeExpr.reset(TypeExpr); } InitDeclarator(ctx){ initDeclarator.reset(InitDeclarator); } ';')
+            { 
+                value = new SimpleDeclarationNode(span, DeclSpecifiers, typeExpr.release(), initDeclarator.release()); 
+            }
+            ;
+
+        DeclSpecifiers : Specifier
+            ::= (DeclSpecifier{ value = value | DeclSpecifier; })*
+            ;
+
+        DeclSpecifier : Specifier
+            ::= StorageClassSpecifier{ value = StorageClassSpecifier; }
+            |   FunctionSpecifier{ value = FunctionSpecifier; }
+            |   keyword("friend"){ value = Specifier::friend_; }
+            |   keyword("constexpr"){ value = Specifier::constExpr; }
+            |   (keyword("__declspec") '(' Identifier ')'){ value = Specifier::extension; }
+            |   keyword("__thread"){ value = Specifier::extension; }
+            ;
+
+        StorageClassSpecifier : Specifier
+            ::= keyword("register"){ value = Specifier::register_; }
+            |   keyword("static"){ value = Specifier::static_; }
+            |   keyword("thread_local"){ value = Specifier::threadLocal; }
+            |   keyword("extern"){ value = Specifier::extern_; }
+            |   keyword("mutable"){ value = Specifier::mutable_; }
+            ;
+
+        FunctionSpecifier : Specifier
+            ::= keyword("inline"){ value = Specifier::inline_; }
+            |   keyword("virtual"){ value = Specifier::virtual_; }
+            |   keyword("explicit"){ value = Specifier::explicit_; }
+            ;
+
+        AliasDeclaration(ParsingContext* ctx) : AliasDeclarationNode*
+            ::= (keyword("using") Identifier '=' TypeExpr(ctx)! ';'!){ value = new AliasDeclarationNode(span, Identifier, TypeExpr); }
+            ;
+
+        UsingDirective(ParsingContext* ctx) : UsingDirectiveNode*
+            ::= (keyword("using") keyword("namespace") QualifiedIdNode(ctx)! ';'!)
+                { 
+                    value = new UsingDirectiveNode(span, QualifiedIdNode); 
+                    ctx->GetSourceFileNode()->AddUsingDirectiveOrDeclaration(value);
+                }
+            ;
+
+        UsingDeclaration(var std::unique_ptr<Node> qid, ParsingContext* ctx) : UsingDeclarationNode*
+            ::= (keyword("using") QualifiedIdNode(ctx){ qid.reset(QualifiedIdNode); } ';')
+                { 
+                    value = new UsingDeclarationNode(span, qid.release()); 
+                    ctx->GetSourceFileNode()->AddUsingDirectiveOrDeclaration(value);
+                }
+            ;
+
+        TypedefDeclaration(ParsingContext* ctx) : TypedefNode*
+            ::= (keyword("typedef") TypeExpr(ctx)! Declarator(ctx)! ';'!){ value = new TypedefNode(span, TypeExpr, Declarator); }
+            ;
+
+        LinkageSpecification(var std::unique_ptr<LinkageSpecificationNode> ls, ParsingContext* ctx) : LinkageSpecificationNode*
+            ::= (keyword("extern") StringLiteral{ ls.reset(new LinkageSpecificationNode(span, StringLiteral)); } 
+                ('{' (Declaration(ctx):d1{ ls->AddDeclaration(span, d1); })* '}'! | Declaration(ctx):d2{ ls->AddDeclaration(span, d2); }))
+            {
+                value = ls.release();
+            }
+            ;
+    }
+}

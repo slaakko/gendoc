@@ -1,0 +1,199 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Solution.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Solution
+    {
+        using stdlib.newline;
+        using stdlib.uint;
+        using stdlib.string;
+        using stdlib.identifier;
+        skip SpacesOrComments;
+
+        Solution : gendoc::cppast::Solution*
+            ::= SolutionHeader{ value = SolutionHeader; }
+                Projects(value)
+                Global(value)
+            ;
+
+        SolutionHeader : gendoc::cppast::Solution*
+            ::= ("Microsoft Visual Studio Solution File" ',' FormatVersion
+                keyword("VisualStudioVersion") '=' ProgramVersion:visualStudionVersion
+                keyword("MinimumVisualStudioVersion") '=' ProgramVersion:minVisualStudioVersion)
+            {
+                value = new gendoc::cppast::Solution(fileName, FormatVersion, visualStudionVersion, minVisualStudioVersion);
+            }
+            ;
+
+        Comment
+            ::= '#' (anychar - newline)* newline
+            ;
+
+        SpacesOrComments
+            ::= (space | Comment)+
+            ;
+
+        Projects(gendoc::cppast::Solution* solution)
+            ::= (Project{ solution->AddProject(Project); })*
+            ;
+
+        Project : Project*
+            ::= (keyword("Project") '(' GuidString:languageGuid ')' '=' string:projectName ',' FilePath:projectFilePath ',' GuidString:projectGuid)
+                {
+                    value = new Project(languageGuid, projectName, projectFilePath, projectGuid);
+                }
+                ProjectContent(value) 
+                keyword("EndProject")
+            ;
+
+        ProjectContent(Project* project)
+            ::= ProjectSection(project)*
+            ;
+
+        ProjectSection(Project* project)
+            ::= ProjectDependencySection(project)
+            ;
+
+        ProjectDependencySection(Project* project)
+            ::= keyword("ProjectSection") '(' keyword("ProjectDependencies") ')' '=' keyword("postProject") ProjectDependencySectionContent(project) keyword("EndProjectSection")
+            ;
+
+        ProjectDependencySectionContent(Project* project)
+            ::= (DependentProject{ project->AddDependency(DependentProject); })*
+            ;
+            
+        DependentProject : std::u32string
+            ::= (Guid:projectGuid '=' Guid:postGuid){ value = projectGuid; }
+            ;
+
+        Global(gendoc::cppast::Solution* solution)
+            ::= keyword("Global") GlobalSections(solution) keyword("EndGlobal")
+            ;
+
+        GlobalSections(gendoc::cppast::Solution* solution)
+            ::= GlobalSection*
+            ;
+
+        GlobalSection
+            ::= SolutionConfigurationPlatformSection
+            |   ProjectConfigurationPlatformSection
+            |   SolutionPropertySection
+            |   ExtensibilityGlobalSection
+            ;
+
+        SolutionConfigurationPlatformSection
+            ::= keyword("GlobalSection") '(' keyword("SolutionConfigurationPlatforms") ')' '=' keyword("preSolution") SolutionConfigurationPlatforms keyword("EndGlobalSection")
+            ;
+
+        SolutionConfigurationPlatforms
+            ::= SolutionConfigurationPlatform*
+            ;
+
+        SolutionConfigurationPlatform
+            ::= Configuration '=' Configuration
+            ;
+
+        Configuration
+            ::= token(identifier:left '|' Platform:right)
+            ;
+
+        Platform
+            ::= "Any CPU" | identifier
+            ;
+
+        ProjectConfigurationPlatformSection
+            ::= keyword("GlobalSection") '(' keyword("ProjectConfigurationPlatforms") ')' '=' keyword("postSolution") ProjectConfigurationPlatforms keyword("EndGlobalSection")
+            ;
+
+        ProjectConfigurationPlatforms
+            ::= ProjectConfigurationPlatform*
+            ;
+
+        ProjectConfigurationPlatform
+            ::= ProjectConfiguration '=' Configuration
+            ;
+
+        ProjectConfiguration
+            ::= token(Guid '.' Configuration '.' ConfigName)
+            ;
+
+        ConfigName
+            ::= (letter | digit | '.')+
+            ;
+
+        SolutionPropertySection
+            ::= keyword("GlobalSection") '(' keyword("SolutionProperties") ')' '=' keyword("preSolution") SolutionProperties keyword("EndGlobalSection")
+            ;
+
+        SolutionProperties
+            ::= SolutionProperty*
+            ;
+
+        SolutionProperty
+            ::= identifier:left '=' identifier:right
+            ;
+
+        ExtensibilityGlobalSection
+            ::= keyword("GlobalSection") '(' keyword("ExtensibilityGlobals") ')' '=' keyword("postSolution") ExtensibilityGlobals keyword("EndGlobalSection")
+            ;
+
+        ExtensibilityGlobals
+            ::= ExtensibilityGlobal*
+            ;
+
+        ExtensibilityGlobal
+            ::= keyword("SolutionGuid") '=' Guid
+            ;
+
+        FormatVersion : Version
+            ::= token("Format Version " MajorVersion:major '.' MinorVersion:minor){ value = Version(major, minor, 0, 0); }
+            ;
+
+        ProgramVersion : Version
+            ::= token(MajorVersion:major '.' MinorVersion:minor '.' Revision:revision '.' BuildNumber:build){ value = Version(major, minor, revision, build); }
+            ;
+
+        MajorVersion : uint32_t
+            ::= uint{ value = uint; }
+            ;
+
+        MinorVersion : uint32_t
+            ::= uint{ value = uint; }
+            ;
+
+        Revision : uint32_t
+            ::= uint{ value = uint; }
+            ;
+
+        BuildNumber : uint32_t
+            ::= uint{ value = uint; }
+            ;
+
+        GuidString : std::u32string
+            ::= token('"' Guid '"'){ value = Guid; }
+            ;
+
+        Guid : std::u32string
+            ::= token('{' HexGuid '}'){ value = HexGuid; }
+            ;
+
+        HexGuid : std::u32string
+            ::= token(hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit '-' hexdigit hexdigit hexdigit hexdigit '-' hexdigit hexdigit hexdigit hexdigit '-'
+                hexdigit hexdigit hexdigit hexdigit '-' hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit hexdigit)
+            {
+                value = ToLower(std::u32string(matchBegin, matchEnd));
+            }
+            ;
+
+        FilePath: std::string
+            ::= token('"' ([^"]+){ value = ToUtf8(std::u32string(matchBegin, matchEnd)); } '"'!)
+            ;
+    }
+}

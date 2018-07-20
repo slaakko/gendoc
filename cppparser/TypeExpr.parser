@@ -1,0 +1,60 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/TypeExpr.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[hpp]#include <gendoc/cppast/Expression.hpp>
+[cpp]#include <gendoc/cppparser/SimpleType.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/Class.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar TypeExpr
+    {
+        using Identifier.QualifiedIdNode;
+        using SimpleType.SimpleType;
+        using Class.ClassKey;
+
+        TypeExpr(ParsingContext* ctx) : Node*
+            ::= PrefixTypeExpr(ctx){ value = new TypeExprNode(span, PrefixTypeExpr); }
+            ;
+
+        PrefixTypeExpr(ParsingContext* ctx) : Node*
+            ::= (CVSpecifierSequence PostfixTypeExpr(ctx))
+            {
+                value = CreatePrefixTypeExprNode(span, CVSpecifierSequence, PostfixTypeExpr);
+            }
+            ;
+
+        CVSpecifierSequence : Specifier
+            ::= (CVSpecifier:cv{ value = value | cv; })*
+            ;
+
+        CVSpecifier : Specifier
+            ::= keyword("const"){ value = Specifier::const_; } | keyword("volatile"){value = Specifier::volatile_; }
+            ;
+
+        PostfixTypeExpr(var std::unique_ptr<Node> typeExpr, var Span s, ParsingContext* ctx) : Node*
+            ::= (PrimaryTypeExpr(ctx){ typeExpr.reset(PrimaryTypeExpr); s = span; }
+                (   '*'{ s.SetEnd(span.End()); typeExpr.reset(new PointerNode(s, typeExpr.release())); }
+                |   "&&"{ s.SetEnd(span.End()); typeExpr.reset(new RValueRefNode(s, typeExpr.release())); }
+                |   '&'{ s.SetEnd(span.End()); typeExpr.reset(new LValueRefNode(s, typeExpr.release())); }
+                )*
+            )
+            {
+                value = typeExpr.release();
+            }
+            ;
+
+        PrimaryTypeExpr(ParsingContext* ctx, var ClassKey key) : Node*
+            ::= SimpleType{ value = SimpleType; }
+            |   (keyword("typename"){ key = ClassKey::typename_; } | ClassKey{ key = ClassKey; })? QualifiedIdNode(ctx)
+                { if (key != ClassKey::none) value = new ElaborateClassNameNode(span, key, QualifiedIdNode); else value = QualifiedIdNode; }
+            ;
+    }
+}

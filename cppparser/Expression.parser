@@ -1,0 +1,367 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Expression.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Literal.hpp>
+[cpp]#include <gendoc/cppparser/Template.hpp>
+[cpp]#include <gendoc/cppparser/TypeExpr.hpp>
+[cpp]#include <gendoc/cppparser/Declarator.hpp>
+[cpp]#include <gendoc/cppparser/Identifier.hpp>
+[cpp]#include <gendoc/cppparser/SimpleType.hpp> 
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Expression
+    {
+        using Declarator.InitializerList;
+        using Declarator.BracedInitializerList;
+        using Declarator.InitializerClause;
+        using SimpleType.SimpleTypeSpecifier;
+        using Literal.Literal;
+        using Template.TemplateId;
+        using Template.SimpleTemplateId;
+        using TypeExpr.TypeExpr;
+        using Identifier.Identifier;
+        using Identifier.NestedNameSpecifier;
+
+        ExpressionList(ParsingContext* ctx) : Node*
+            ::= InitializerList(ctx){ value = InitializerList; }
+            ;
+
+        PossiblyEmptyArgumentList(ParsingContext* ctx) : Node*
+            ::= ExpressionList(ctx){ value = ExpressionList; } 
+            |   empty{ value = nullptr; }
+            ;
+
+        Expression(var std::unique_ptr<Node> expr, var Span s, ParsingContext* ctx) : Node*
+            ::= (AssignmentExpression(ctx):left{ expr.reset(left); s = span; } 
+                (',' AssignmentExpression(ctx):right{ s.SetEnd(span.End()); expr.reset(new CommaExpressionNode(s, expr.release(), right)); })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        ConstantExpression(ParsingContext* ctx) : Node*
+            ::= ConditionalExpression(ctx){ value = ConditionalExpression; }
+            ;
+
+        AssignmentExpression(ParsingContext* ctx) : Node*
+            ::= ConcreteAssignmentExpression(ctx){ value = ConcreteAssignmentExpression; }
+            |   ConditionalExpression(ctx){ value = ConditionalExpression; }
+            |   ThrowExpression(ctx){ value = ThrowExpression; }
+            ;
+
+        ConcreteAssignmentExpression(var std::unique_ptr<Node> logicalOrExpr, ParsingContext* ctx) : Node*
+            ::= empty{ ctx->BeginParsingLvalue(); } (LogicalOrExpression(ctx){ ctx->EndParsingLvalue(); logicalOrExpr.reset(LogicalOrExpression); } / { ctx->EndParsingLvalue(); }
+                AssignmentOperator InitializerClause(ctx))
+            {
+                value = new AssignmentExpressionNode(span, logicalOrExpr.release(), AssignmentOperator, InitializerClause);
+            }
+            ;
+
+        AssignmentOperator : Operator
+            ::= ("=" - "=="){ value = Operator::assign; }
+            |   "*="{ value = Operator::mulAssign; }
+            |   "/="{ value = Operator::divAssign; }
+            |   "%="{ value = Operator::remAssign; }
+            |   "+="{ value = Operator::addAssign; }
+            |   "-="{ value = Operator::subAssign; }
+            |   ">>="{ value = Operator::shiftRightAssign; }
+            |   "<<="{ value = Operator::shiftLeftAssign; }
+            |   "&="{ value = Operator::andAssign; }
+            |   "^="{ value = Operator::xorAssign; }
+            |   "|="{ value = Operator::orAssign; }
+            ;
+
+        ConditionalExpression(var std::unique_ptr<Node> expr, var std::unique_ptr<Node> qe, var Span s, ParsingContext* ctx) : Node*
+            ::= (LogicalOrExpression(ctx){ expr.reset(LogicalOrExpression); s = span; } 
+                (('?' Expression(ctx){ qe.reset(Expression); } ':' AssignmentExpression(ctx))
+                { 
+                    s.SetEnd(span.End()); 
+                    expr.reset(new ConditionalExpressionNode(s, expr.release(), qe.release(), AssignmentExpression)); 
+                }
+                )?
+            )
+            {
+                value = expr.release();
+            }
+            ;
+
+        ThrowExpression(ParsingContext* ctx) : Node*
+            ::= (keyword("throw") AssignmentExpression(ctx)?){ value = new ThrowExpressionNode(span, AssignmentExpression); }
+            ;
+
+        LogicalOrExpression(var std::unique_ptr<Node> expr, var Span s, ParsingContext* ctx) : Node*
+            ::= (LogicalAndExpression(ctx):left{ expr.reset(left); s = span; } 
+                ("||" LogicalAndExpression(ctx):right{ if (ctx->ParsingTemplateIdOrLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new LogicalOrExpressionNode(s, expr.release(), right)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        LogicalAndExpression(var std::unique_ptr<Node> expr, var Span s, ParsingContext* ctx) : Node*
+            ::= (InclusiveOrExpression(ctx):left{ expr.reset(left); s = span; } 
+                ("&&" InclusiveOrExpression(ctx):right{ if (ctx->ParsingTemplateIdOrLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new LogicalAndExpressionNode(s, expr.release(), right)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        InclusiveOrExpression(var std::unique_ptr<Node> expr, var Span s, ParsingContext* ctx) : Node*
+            ::= (ExclusiveOrExpression(ctx):left{ expr.reset(left); s = span; } 
+                (('|' - ("|=" | "||")) ExclusiveOrExpression(ctx):right{ if (ctx->ParsingLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new InclusiveOrExpressionNode(s, expr.release(), right)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        ExclusiveOrExpression(var std::unique_ptr<Node> expr, var Span s, ParsingContext* ctx) : Node*
+            ::= (AndExpression(ctx):left{ expr.reset(left); s = span; } 
+                (('^' - "^=") AndExpression(ctx):right{ if (ctx->ParsingLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new ExclusiveOrExpressionNode(s, expr.release(), right)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        AndExpression(var std::unique_ptr<Node> expr, var Span s, ParsingContext* ctx) : Node*
+            ::= (EqualityExpression(ctx):left{ expr.reset(left); s = span; } 
+                (('&' - ("&=" | "&&")) EqualityExpression(ctx):right{ if (ctx->ParsingLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new AndExpressionNode(s, expr.release(), right)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        EqualityExpression(var std::unique_ptr<Node> expr, var Span s, var Operator op, ParsingContext* ctx) : Node*
+            ::= (RelationalExpression(ctx):left{ expr.reset(left); s = span; } 
+                (("=="{ op = Operator::equal; } | "!="{ op = Operator::notEqual; }) 
+                RelationalExpression(ctx):right{ if (ctx->ParsingLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new EqualityExpressionNode(s, expr.release(), right, op)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        RelationalExpression(var std::unique_ptr<Node> expr, var Span s, var Operator op, ParsingContext* ctx) : Node*
+            ::= (ShiftExpression(ctx):left{ expr.reset(left); s = span; } 
+                (   (   "<="{ op = Operator::lessOrEqual; } 
+                    |   ">="{ op = Operator::greaterOrEqual; } 
+                    |   ('<' - ("<<" | "<<=")){ op = Operator::less; } 
+                    |   ('>' - (">>" | ">>=")){ op = Operator::greater; }
+                    ) 
+                    ShiftExpression(ctx):right{ if (ctx->ParsingTemplateIdOrLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new RelationalExpressionNode(s, expr.release(), right, op)); } }
+                )*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        ShiftExpression(var std::unique_ptr<Node> expr, var Span s, var Operator op, ParsingContext* ctx) : Node*
+            ::= (AdditiveExpression(ctx):left{ expr.reset(left); s = span; } 
+                ((("<<" - "<<="){ op = Operator::shiftLeft; } | (">>" - ">>="){ op = Operator::shiftRight; }) 
+                AdditiveExpression(ctx):right{ if (ctx->ParsingTemplateIdOrLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new ShiftExpressionNode(s, expr.release(), right, op)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        AdditiveExpression(var std::unique_ptr<Node> expr, var Span s, var Operator op, ParsingContext* ctx) : Node*
+            ::= (MultiplicativeExpression(ctx):left{ expr.reset(left); s = span; } 
+                ((('+' - "+="){ op = Operator::add; } | ('-' - "-="){ op = Operator::sub; }) 
+                MultiplicativeExpression(ctx):right{ if (ctx->ParsingLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new AdditiveExpressionNode(s, expr.release(), right, op)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        MultiplicativeExpression(var std::unique_ptr<Node> expr, var Span s, var Operator op, ParsingContext* ctx) : Node*
+            ::= (PMExpression(ctx):left{ expr.reset(left); s = span; }
+                ((('*' - "*="){ op = Operator::mul; } | ('/' - "/="){ op = Operator::div; } | ('%' - "%="){ op = Operator::rem; }) 
+                PMExpression(ctx):right{ if (ctx->ParsingLvalueAndNotArguments()) pass = false; else { s.SetEnd(span.End()); expr.reset(new MultiplicativeExpressionNode(s, expr.release(), right, op)); } })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        PMExpression(var std::unique_ptr<Node> expr, var Span s, var Operator op, ParsingContext* ctx) : Node*
+            ::= (CastExpression(ctx):left{ expr.reset(left); s = span; } 
+                ((".*"{ op = Operator::dotStar; } | "->*"{ op = Operator::arrowStar; }) 
+                CastExpression(ctx):right{ s.SetEnd(span.End()); expr.reset(new PMExpressionNode(s, expr.release(), right, op)); })*)
+            {
+                value = expr.release();
+            }
+            ;
+
+        CastExpression(var std::unique_ptr<Node> expr, ParsingContext* ctx) : Node*
+            ::= ('(' TypeExpr(ctx){ expr.reset(TypeExpr); } ')' CastExpression(ctx)){ value = new CastExpressionNode(span, expr.release(), CastExpression); }
+            |   UnaryExpression(ctx){ value = UnaryExpression; }
+            ;
+            
+        UnaryExpression(ParsingContext* ctx) : Node*
+            ::= ("++" CastExpression(ctx):c1){ value = new UnaryExpressionNode(span, Operator::inc, c1); }
+            |   ("--" CastExpression(ctx):c2){ value = new UnaryExpressionNode(span, Operator::dec, c2); }
+            |   (UnaryOperator CastExpression(ctx):c3){ value = new UnaryExpressionNode(span, UnaryOperator, c3); }
+            |   (keyword("sizeof") UnaryExpression(ctx):u4){ value = new UnaryExpressionNode(span, Operator::sizeOf, u4); }
+            |   (keyword("alignof") '(' TypeExpr(ctx):t5 ')'){ value = new UnaryExpressionNode(span, Operator::alignOf, t5); }
+            |   NewExpression(ctx){ value = NewExpression; }
+            |   DeleteExpression(ctx){ value = DeleteExpression; }
+            |   PostfixExpression(ctx){ value = PostfixExpression; }
+            ;
+
+        UnaryOperator : Operator
+            ::= ('*' - "*="){ value = Operator::deref; }
+            |   ('&' - "&="){ value = Operator::addrOf; }
+            |   ('+' - "+="){ value = Operator::unaryPlus; }
+            |   ('-' - "-="){ value = Operator::unaryMinus; }
+            |   '!'{ value = Operator::not_; }
+            |   '~'{ value = Operator::complement; }
+            ;
+
+        NewExpression(ParsingContext* ctx) : Node*
+            ::= (keyword("new") NewPlacement(ctx)? TypeExpr(ctx) NewInitializer(ctx)?){ value = new NewExpressionNode(span, NewPlacement, TypeExpr, NewInitializer); }
+            ;
+
+        NewPlacement(ParsingContext* ctx) : Node*
+            ::= ('(' ExpressionList(ctx) ')'){ value = ExpressionList; }
+            ;
+
+        NewInitializer(ParsingContext* ctx) : Node*
+            ::= ('(' PossiblyEmptyArgumentList(ctx):args ')'){ value = args; }
+            ;
+
+        DeleteExpression(var bool array_, ParsingContext* ctx) : Node*
+            ::= (keyword("delete") ('[' ']'{ array_ = true; })? CastExpression(ctx)){ value = new DeleteExpressionNode(span, array_, CastExpression); }
+            ;
+
+        PostfixExpression(var std::unique_ptr<Node> expr, var std::unique_ptr<Node> args, var Span s, ParsingContext* ctx) : Node*
+            ::= (PrimaryExpression(ctx){ expr.reset(PrimaryExpression); s = span; }
+                    (   '['{ ctx->BeginParsingArguments(); } Expression(ctx):index ']'
+                        { 
+                            ctx->EndParsingArguments(); s.SetEnd(span.End()); expr.reset(new SubscriptExpressionNode(s, expr.release(), index)); 
+                        } 
+                        / 
+                        { ctx->EndParsingArguments(); }
+                    |   '('{ ctx->BeginParsingArguments(); } (PossiblyEmptyArgumentList(ctx):arguments{ args.reset(arguments); }) ')' 
+                        { ctx->EndParsingArguments(); s.SetEnd(span.End()); expr.reset(new InvokeExpressionNode(s, expr.release(), args.release())); } 
+                        / 
+                        { ctx->EndParsingArguments(); }
+                    |   ('.' - ".*") IdExpression(ctx):id1{ s.SetEnd(span.End()); expr.reset(new DotNode(s, expr.release(), id1)); }
+                    |   ("->" - "->*") IdExpression(ctx):id2{ s.SetEnd(span.End()); expr.reset(new ArrowNode(s, expr.release(), id2)); }
+                    |   "++"{ s.SetEnd(span.End()); expr.reset(new PostfixIncNode(s, expr.release())); }
+                    |   "--"{ s.SetEnd(span.End()); expr.reset(new PostfixDecNode(s, expr.release())); }
+                    )*
+            )
+            {
+                value = expr.release();
+            }
+            ;
+
+        PrimaryExpression(var std::unique_ptr<Node> expr, ParsingContext* ctx) : Node*
+            ::= (Literal{ expr.reset(Literal); }
+            |   keyword("this"){ expr.reset(new ThisNode(span)); }
+            |   ('(' Expression(ctx) ')'){ expr.reset(new ParenthesizedExprNode(span, Expression)); }
+            |   CppCastExpression(ctx){ expr.reset(CppCastExpression); }
+            |   TypeIdExpression(ctx){ expr.reset(TypeIdExpression); }
+            |   IdExpression(ctx){ expr.reset(IdExpression); }
+            |   (SimpleTypeSpecifier:s1 '(' PossiblyEmptyArgumentList(ctx):args{ expr.reset(args); } ')')
+                { 
+                    expr.reset(new SimpleTypeCastExpressionNode(span, new SimpleTypeNode(span, std::vector<SimpleTypeSpecifier>(1, s1)), expr.release())); 
+                }
+            |   (SimpleTypeSpecifier:s2 BracedInitializerList(ctx){ expr.reset(BracedInitializerList); })
+                { 
+                    expr.reset(new SimpleTypeCastExpressionNode(span, new SimpleTypeNode(span, std::vector<SimpleTypeSpecifier>(1, s2)), expr.release())); 
+                }
+            )
+            {
+                value = expr.release();
+            }
+            ;
+    
+        CppCastExpression(var Operator op, ParsingContext* ctx) : Node*
+            ::= 
+            (   (   keyword("dynamic_cast"){ op = Operator::dynamicCast; }
+                |   keyword("static_cast"){ op = Operator::staticCast; }
+                |   keyword("reinterpret_cast"){ op = Operator::reinterpretCast; } 
+                |   keyword("const_cast"){ op = Operator::constCast; }
+                )   
+                '<' TypeExpr(ctx):t1 '>' '(' Expression(ctx):e1 ')'
+            )
+            {
+                value = new CppCastExpressionNode(span, t1, e1, op); 
+            }
+            ;
+
+        TypeIdExpression(ParsingContext* ctx) : Node*
+            ::= (keyword("typeid") '(' TypeExpr(ctx):t1 ')'){ value = new TypeIdExpressionNode(span, t1); }
+            |   (keyword("typeid") '(' Expression(ctx):e1 ')'){ value = new TypeIdExpressionNode(span, e1); }
+            ;
+
+        IdExpression(ParsingContext* ctx) : Node*
+            ::= QualifiedId(ctx){ value = QualifiedId; }
+            |   UnqualifiedId(ctx){ value = UnqualifiedId; }
+            ;
+
+        UnqualifiedId(ParsingContext* ctx) : Node*
+            ::= TemplateId(ctx){ value = TemplateId; }
+            |   Identifier:id1{ value = new IdentifierNode(span, id1); }
+            |   OperatorFunctionId{ value = OperatorFunctionId; }
+            |   ConversionFunctionId(ctx){ value = ConversionFunctionId; }
+            |   ('~' Identifier:id2){ value = new DtorIdNode(span, id2); }
+            ;
+
+        QualifiedId(var std::unique_ptr<Node> node, ParsingContext* ctx) : Node*
+            ::= ("::" TemplateId(ctx)){ value = new NestedIdNode(span, nullptr, TemplateId); }
+            |   ("::" NestedNameSpecifier(ctx):ns1{ node.reset(ns1); } UnqualifiedId(ctx):uid1){ value = new NestedIdNode(span, new NestedIdNode(span, nullptr, node.release()), uid1); }
+            |   ("::" Identifier){ value = new NestedIdNode(span, nullptr, new IdentifierNode(span, Identifier)); }
+            |   ("::" OperatorFunctionId){ value = new NestedIdNode(span, nullptr, OperatorFunctionId); }
+            |   (NestedNameSpecifier(ctx):ns2{ node.reset(ns2); } UnqualifiedId(ctx):uid2){ value = new NestedIdNode(span, node.release(), uid2); }
+            ;
+
+        OperatorFunctionId : Node*
+            ::= (keyword("operator") Operator){ value = new OperatorFunctionIdNode(span, Operator); }
+            ;
+
+        Operator : Operator
+            ::= (keyword("new") "[]"){ value = Operator::newArray; }
+            |   (keyword("delete") "[]"){ value = Operator::deleteArray; }
+            |   keyword("new"){ value = Operator::new_; }
+            |   keyword("delete"){ value = Operator::delete_; }
+            |   AssignmentOperator{ value = AssignmentOperator; }
+            |   "++"{ value = Operator::inc; }
+            |   "--"{ value = Operator::dec; }
+            |   "<<"{ value = Operator::shiftLeft; }
+            |   ">>"{ value = Operator::shiftRight; }
+            |   "&&"{ value = Operator::logicalAnd; }
+            |   "||"{ value = Operator::logicalOr; }
+            |   "=="{ value = Operator::equal; }
+            |   "!="{ value = Operator::notEqual; }
+            |   "<="{ value = Operator::lessOrEqual; }
+            |   ">="{ value = Operator::greaterOrEqual; }
+            |   ".*"{ value = Operator::dotStar; }
+            |   "->*"{ value = Operator::arrowStar; }
+            |   "->"{ value = Operator::arrow; }
+            |   "()"{ value = Operator::apply; }
+            |   "[]"{ value = Operator::subscript; }
+            |   '<'{ value = Operator::less; }
+            |   '>'{ value = Operator::greater; }
+            |   '+'{ value = Operator::add; }
+            |   '-'{ value = Operator::sub; }
+            |   '*'{ value = Operator::mul; }
+            |   '/'{ value = Operator::div; }
+            |   '%'{ value = Operator::rem; }
+            |   '^'{ value = Operator::xor_; }
+            |   '&'{ value = Operator::and_; }
+            |   '|'{ value = Operator::or_; }
+            |   '~'{ value = Operator::complement; }
+            |   '!'{ value = Operator::not_; }
+            |   ','{ value = Operator::comma; }
+            ;
+
+        ConversionFunctionId(ParsingContext* ctx) : Node*
+            ::= (keyword("operator") TypeExpr(ctx)){ value = new ConversionFunctionIdNode(span, TypeExpr); }
+            ;
+    }
+}

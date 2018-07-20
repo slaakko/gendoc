@@ -1,0 +1,31 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+namespace gendoc.cppparser
+{
+    grammar SourceLines
+    {
+        using stdlib.comment;
+        using stdlib.newline;
+        skip comment;
+
+        SourceFile : int
+            ::= (SourceLine{ value = value + SourceLine; })*
+            ;
+            
+        SourceLine : int
+            ::= PPLine
+            |   token(S* newline)
+            |   token((anychar - newline)+ newline?){ value = 1; }
+            ;
+
+        PPLine
+            ::= token(S* '#' (anychar - newline)* newline)
+            ;
+
+        S   ::= (' ' | '\t')+
+            ;
+    }
+}

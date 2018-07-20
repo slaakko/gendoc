@@ -1,0 +1,55 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/cppast/Function.hpp>
+[hpp]#include <gendoc/cppparser/ParsingContext.hpp>
+[cpp]#include <gendoc/cppparser/Declaration.hpp>
+[cpp]#include <gendoc/cppparser/TypeExpr.hpp>
+[cpp]#include <gendoc/cppparser/Declarator.hpp>
+[cpp]#include <gendoc/cppparser/Statement.hpp>
+[cpp]#include <gendoc/cppparser/Class.hpp>
+
+namespace gendoc.cppparser
+{
+    [hpp]using namespace gendoc::cppast;
+
+    grammar Function
+    {
+        using Declaration.DeclSpecifiers;
+        using TypeExpr.TypeExpr;
+        using Declarator.Declarator;
+        using Statement.CompoundStatement;
+        using Class.VirtPureSpecifiers;
+
+        FunctionDefinition(var std::unique_ptr<Node> typeExpr, var std::unique_ptr<Node> declarator, var Specifier defaultOrDeleteSpecifier, ParsingContext* ctx) : Node*
+            ::= (DeclSpecifiers TypeExpr(ctx){ typeExpr.reset(TypeExpr); } Declarator(ctx){ declarator.reset(Declarator); pass = IsFunctionDeclarator(declarator.get()); }
+                VirtPureSpecifiers(true)
+                    (   FunctionBody(ctx) 
+                    |   '=' (keyword("default"){ defaultOrDeleteSpecifier = Specifier::default_; } | keyword("delete"){ defaultOrDeleteSpecifier = Specifier::delete_; }) ';'
+                    |   ';'{ pass = HasPureSpecifier(VirtPureSpecifiers); }
+                    ) 
+                )
+            { 
+                value = new FunctionNode(span, DeclSpecifiers | defaultOrDeleteSpecifier | VirtPureSpecifiers, typeExpr.release(), declarator.release(), FunctionBody);
+            }
+            ;
+
+        ParameterList(var std::unique_ptr<Node> parameter, var Span s, ParsingContext* ctx) : Node*
+            ::= ('(' (ParameterDeclaration(ctx):left{ parameter.reset(left); s = span; } 
+                (',' ParameterDeclaration(ctx):right{ s.SetEnd(span.End()); parameter.reset(new ParameterSequenceNode(s, parameter.release(), right)); })*)? ')')
+            {
+                value = parameter.release();
+            }
+            ;
+
+        ParameterDeclaration(ParsingContext* ctx) : ParameterNode*
+            ::= (TypeExpr(ctx) Declarator(ctx)?){ value = new ParameterNode(span, TypeExpr, Declarator); }
+            ;
+
+        FunctionBody(ParsingContext* ctx) : CompoundStatementNode*
+            ::= empty{ ctx->BeginFunctionBody(); } CompoundStatement(ctx){ ctx->EndFunctionBody(); value = CompoundStatement; } / { ctx->EndFunctionBody(); }
+            ;
+    }
+}

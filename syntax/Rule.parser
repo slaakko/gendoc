@@ -1,0 +1,31 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[cpp]#include <gendoc/syntax/Element.hpp>
+[cpp]#include <gendoc/syntax/Composite.hpp>
+[hpp]#include <gendoc/parsing/Rule.hpp>
+
+namespace gendoc.syntax
+{
+    grammar Rule
+    {
+        using Element.Identifier;
+        using Element.Signature;
+        using Composite.Alternative;
+        using stdlib.string;
+
+        Rule(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Rule*
+                    ::= RuleHeader(enclosingScope){ value = RuleHeader; } "::=" RuleBody(value)
+                    ;
+
+        RuleHeader(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Rule*
+                    ::= Identifier:name{value = new Rule(name, enclosingScope); value->SetSpan(span); } Signature(value)
+                    ;
+
+        RuleBody(gendoc::parsing::Rule* rule)
+                    ::= (Alternative(rule->GetScope()):definition! ';'!){ rule->SetDefinition(definition); }
+                    ;
+    }
+}

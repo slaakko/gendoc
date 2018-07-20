@@ -1,0 +1,52 @@
+// =================================
+// Copyright (c) 2018 Seppo Laakko
+// Distributed under the MIT license
+// =================================
+
+[hpp]#include <gendoc/parsing/ParsingDomain.hpp>
+[cpp]#include <gendoc/parsing/Rule.hpp>
+[cpp]#include <gendoc/parsing/Namespace.hpp>
+[cpp]#include <gendoc/syntax/Element.hpp>
+
+namespace gendoc.syntax
+{
+    grammar LibraryFile
+    {
+        using stdlib.identifier;
+        using stdlib.qualified_id;
+        using stdlib.spaces_and_comments;
+        using Element.Identifier;
+        using Element.Signature;
+
+        skip spaces_and_comments;
+
+        LibraryFile(gendoc::parsing::ParsingDomain* parsingDomain)
+                        ::= NamespaceContent(parsingDomain)
+                        ;
+
+        NamespaceContent(gendoc::parsing::ParsingDomain* parsingDomain)
+                        ::= 
+                        (   Grammar(parsingDomain->CurrentNamespace()->GetScope()){ parsingDomain->AddGrammar(Grammar); }
+                        |   Namespace(parsingDomain)
+                        )*
+                        ;
+
+        Namespace(gendoc::parsing::ParsingDomain* parsingDomain)
+                        ::= keyword("namespace") qualified_id:ns!{ parsingDomain->BeginNamespace(ns); } '{'! NamespaceContent(parsingDomain) '}'!{ parsingDomain->EndNamespace(); }
+                        ;
+
+        Grammar(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Grammar*
+                        ::= keyword("grammar") 
+                            Identifier:grammarName!{ value = new Grammar(grammarName, enclosingScope); value->SetNs(enclosingScope->Ns()); }
+                            '{'! GrammarContent(value) '}'!
+                        ;
+
+        GrammarContent(gendoc::parsing::Grammar* grammar)
+                        ::= (Rule(grammar->GetScope()){ grammar->AddRule(Rule); })*
+                        ;
+
+        Rule(gendoc::parsing::Scope* enclosingScope): gendoc::parsing::Rule*
+                        ::= Identifier:ruleName{ value = new gendoc::parsing::Rule(ruleName, enclosingScope); } Signature(value) ';'
+                        ;
+    }
+}
